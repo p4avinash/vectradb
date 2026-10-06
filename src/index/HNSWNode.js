@@ -20,6 +20,14 @@ class HNSWNode {
     this.neighbors.get(level).add(neighborId)
   }
 
+  removeNeighbor(level, neighborId) {
+    if (!this.neighbors.has(level)) {
+      return
+    }
+
+    this.neighbors.get(level).delete(neighborId)
+  }
+
   getNeighbors(level) {
     if (!this.neighbors.has(level)) {
       return []
