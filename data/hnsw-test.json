@@ -1,0 +1,50 @@
+{
+  "M": 2,
+  "efConstruction": 4,
+  "efSearch": 5,
+  "dimension": 3,
+  "entryPoint": "doc-1",
+  "maxLevel": 0,
+  "nodes": [
+    {
+      "id": "doc-1",
+      "vector": [
+        1,
+        0,
+        0
+      ],
+      "level": 0,
+      "neighbors": {
+        "0": [
+          "doc-3"
+        ]
+      }
+    },
+    {
+      "id": "doc-3",
+      "vector": [
+        0.8,
+        0.2,
+        0
+      ],
+      "level": 0,
+      "neighbors": {
+        "0": [
+          "doc-1"
+        ]
+      }
+    },
+    {
+      "id": "doc-4",
+      "vector": [
+        0,
+        1,
+        0
+      ],
+      "level": 0,
+      "neighbors": {
+        "0": []
+      }
+    }
+  ]
+}

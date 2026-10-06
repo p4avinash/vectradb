@@ -4,10 +4,17 @@ const MinHeap = require("./MinHeap")
 const cosineSimilarity = require("../similarity/cosineSimilarity")
 
 class HNSWIndex {
-  constructor({ M = 4, efConstruction = 100, efSearch = 50 } = {}) {
+  constructor({
+    M = 4,
+    efConstruction = 100,
+    efSearch = 50,
+    storage = null,
+  } = {}) {
     this.M = M
     this.efConstruction = efConstruction
     this.efSearch = efSearch
+
+    this.storage = storage
 
     this.nodes = new Map()
 
@@ -15,6 +22,8 @@ class HNSWIndex {
     this.maxLevel = -1
 
     this.dimension = null
+
+    this.load()
   }
 
   getRandomLevel(maxLevel = 16) {
@@ -56,6 +65,8 @@ class HNSWIndex {
       this.entryPoint = id
       this.maxLevel = level
 
+      this.save()
+
       return node
     }
 
@@ -63,6 +74,8 @@ class HNSWIndex {
       this.maxLevel = level
       this.entryPoint = id
     }
+
+    this.save()
 
     return node
   }
@@ -96,6 +109,8 @@ class HNSWIndex {
 
       this.entryPoint = id
       this.maxLevel = level
+
+      this.save()
 
       return node
     }
@@ -150,8 +165,7 @@ class HNSWIndex {
       )
 
       /*
-       * Take best M candidates
-       * for actual connections.
+       * Select best M candidates.
        */
       const neighbors = candidates.slice(0, this.M)
 
@@ -170,12 +184,14 @@ class HNSWIndex {
 
     /*
      * Higher-level node becomes
-     * new global entry point.
+     * global entry point.
      */
     if (level > this.maxLevel) {
       this.entryPoint = id
       this.maxLevel = level
     }
+
+    this.save()
 
     return node
   }
@@ -283,15 +299,14 @@ class HNSWIndex {
     /*
      * Candidate MaxHeap:
      *
-     * Highest score gets explored first.
+     * Highest score is explored first.
      */
     const candidates = new MaxHeap((a, b) => a.score - b.score)
 
     /*
      * Result MinHeap:
      *
-     * Lowest score among retained
-     * results stays at the root.
+     * Lowest score stays at root.
      */
     const results = new MinHeap((a, b) => a.score - b.score)
 
@@ -317,10 +332,10 @@ class HNSWIndex {
       const current = candidates.peek()
 
       /*
-       * If we already have ef results
-       * and the best unexplored node
-       * cannot beat the worst result,
-       * we can stop.
+       * If the best unexplored
+       * candidate cannot beat the
+       * worst retained result,
+       * stop searching.
        */
       if (results.size >= ef) {
         const worstResult = results.peek()
@@ -331,7 +346,7 @@ class HNSWIndex {
       }
 
       /*
-       * Remove best candidate from
+       * Remove candidate from
        * exploration queue.
        */
       candidates.pop()
@@ -345,10 +360,6 @@ class HNSWIndex {
       const neighbors = currentNode.getNeighbors(level)
 
       for (const neighborId of neighbors) {
-        /*
-         * Never explore the same node
-         * twice.
-         */
         if (visited.has(neighborId)) {
           continue
         }
@@ -369,13 +380,13 @@ class HNSWIndex {
         }
 
         /*
-         * Always consider this node
-         * for future exploration.
+         * Candidate is always added
+         * for possible exploration.
          */
         candidates.push(result)
 
         /*
-         * Result set still has space.
+         * Result heap still has space.
          */
         if (results.size < ef) {
           results.push(result)
@@ -384,13 +395,14 @@ class HNSWIndex {
         }
 
         /*
-         * Result set is full.
-         *
-         * Replace the worst result
-         * only if this node is better.
+         * Result heap is full.
          */
         const worstResult = results.peek()
 
+        /*
+         * Replace worst result if
+         * new candidate is better.
+         */
         if (score > worstResult.score) {
           results.pop()
 
@@ -401,7 +413,7 @@ class HNSWIndex {
 
     /*
      * Convert result heap into
-     * sorted descending array.
+     * descending score array.
      */
     const finalResults = []
 
@@ -535,7 +547,7 @@ class HNSWIndex {
 
     /*
      * Level 0:
-     * proper efSearch exploration.
+     * efSearch exploration.
      */
     const results = this.searchLayer(
       queryVector,
@@ -544,10 +556,188 @@ class HNSWIndex {
       this.efSearch,
     )
 
-    /*
-     * Return only requested Top-K.
-     */
     return results.slice(0, topK)
+  }
+
+  delete(id) {
+    const node = this.getNode(id)
+
+    if (!node) {
+      return false
+    }
+
+    /*
+     * Remove this node from
+     * every neighbor at every level.
+     */
+    for (let level = 0; level <= node.level; level++) {
+      const neighbors = node.getNeighbors(level)
+
+      for (const neighborId of neighbors) {
+        const neighbor = this.getNode(neighborId)
+
+        if (!neighbor) {
+          continue
+        }
+
+        neighbor.removeNeighbor(level, id)
+      }
+
+      /*
+       * Clear deleted node's
+       * own neighbor lists.
+       */
+      for (const neighborId of neighbors) {
+        node.removeNeighbor(level, neighborId)
+      }
+    }
+
+    /*
+     * Remove node from graph.
+     */
+    this.nodes.delete(id)
+
+    /*
+     * Graph is empty.
+     */
+    if (this.nodes.size === 0) {
+      this.entryPoint = null
+      this.maxLevel = -1
+      this.dimension = null
+
+      this.save()
+
+      return true
+    }
+
+    /*
+     * Deleted node was entry point.
+     */
+    if (this.entryPoint === id) {
+      this.recalculateEntryPoint()
+    }
+
+    this.save()
+
+    return true
+  }
+
+  recalculateEntryPoint() {
+    let newEntryPoint = null
+
+    let highestLevel = -1
+
+    for (const node of this.nodes.values()) {
+      if (node.level > highestLevel) {
+        highestLevel = node.level
+
+        newEntryPoint = node.id
+      }
+    }
+
+    this.entryPoint = newEntryPoint
+
+    this.maxLevel = highestLevel
+  }
+
+  update(id, newVector) {
+    const node = this.getNode(id)
+
+    if (!node) {
+      throw new Error(`Node with ID "${id}" not found`)
+    }
+
+    if (!Array.isArray(newVector) || newVector.length === 0) {
+      throw new Error("Vector must be a non-empty array")
+    }
+
+    if (newVector.length !== this.dimension) {
+      throw new Error(`Vector dimension must be ${this.dimension}`)
+    }
+
+    /*
+     * Remove old graph node.
+     */
+    this.delete(id)
+
+    /*
+     * Reinsert same ID with
+     * new vector.
+     */
+    return this.insert(id, newVector)
+  }
+
+  save() {
+    if (!this.storage) {
+      return
+    }
+
+    const nodes = []
+
+    for (const node of this.nodes.values()) {
+      const neighbors = {}
+
+      for (const [level, neighborIds] of node.neighbors) {
+        neighbors[level] = Array.from(neighborIds)
+      }
+
+      nodes.push({
+        id: node.id,
+        vector: node.vector,
+        level: node.level,
+        neighbors,
+      })
+    }
+
+    const data = {
+      M: this.M,
+      efConstruction: this.efConstruction,
+      efSearch: this.efSearch,
+      dimension: this.dimension,
+      entryPoint: this.entryPoint,
+      maxLevel: this.maxLevel,
+      nodes,
+    }
+
+    this.storage.save(data)
+  }
+
+  load() {
+    if (!this.storage) {
+      return
+    }
+
+    const data = this.storage.load()
+
+    if (!data) {
+      return
+    }
+
+    this.M = data.M
+    this.efConstruction = data.efConstruction
+    this.efSearch = data.efSearch
+
+    this.dimension = data.dimension
+
+    this.entryPoint = data.entryPoint
+
+    this.maxLevel = data.maxLevel
+
+    this.nodes = new Map()
+
+    for (const record of data.nodes) {
+      const node = new HNSWNode(record.id, record.vector, record.level)
+
+      for (const [level, neighborIds] of Object.entries(record.neighbors)) {
+        const numericLevel = Number(level)
+
+        for (const neighborId of neighborIds) {
+          node.addNeighbor(numericLevel, neighborId)
+        }
+      }
+
+      this.nodes.set(record.id, node)
+    }
   }
 
   getNode(id) {
