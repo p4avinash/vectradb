@@ -7,7 +7,7 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node tests/cosineSimilarity.test.js && node tests/Heap.test.js && node tests/VectorStore.test.js && node tests/HNSWIndex.test.js && node tests/HNSWDeleteUpdate.test.js && node tests/persistence.test.js && node tests/HNSWPersistence.test.js",
     "dev": "nodemon src/api/server.js",
     "start": "node src/api/server.js"
   },

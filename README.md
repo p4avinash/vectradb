@@ -988,4 +988,34 @@ The complete system can be summarized as:
      └───────┴────────┘             └───────┴───────────┘
 ```
 
-**VectraDB = Vector Storage + HNSW Search + Embeddings + RAG + API**
+**VectraDB = Vector Storage + HNSW Search + Embeddings + RAG + API + VectraDB Explorer UI**
+
+---
+
+# VectraDB Explorer (Web UI)
+
+A developer workbench and educational visualizer for VectraDB, located inside `frontend/`.
+
+### Launching VectraDB Explorer
+
+1. Start the server:
+   ```bash
+   npm run dev
+   # or
+   npm start
+   ```
+2. Open your browser and navigate to:
+   ```text
+   http://localhost:3000
+   ```
+
+### UI Features
+
+- **Overview / Dashboard**: Real-time stats (total vectors, 384D dimension, ingested documents, HNSW nodes, storage engine) + interactive 8-stage architecture pipeline.
+- **Embed Data**: Document ingestion with preset text loaders, configurable chunk sizes/overlap, and real-time 5-stage progress flow.
+- **Vector Explorer**: Searchable vector table, metadata inspection, first 16 dimension chips, scrollable 384D full vector view, and CRUD operations.
+- **Query Playground**: Question input with presets, Top-K & threshold controls, **2D PCA Vector Space Scatter Plot** with query points and distance lines, ranked Top-K result cards, and RAG grounded AI answers.
+- **HNSW Graph**: Real multi-layer graph canvas with layer plane filtering (All Layers, Layer 0, Layer 1, etc.), entry point indicators, edge rendering, and node inspection.
+- **RAG Playground**: Step-by-step visual dissection of Question Ingestion → 384D Embedding → HNSW Traversal → Threshold Filter → Context Assembly → Prompt Construction → Groq LLM Inference.
+- **Similarity Explorer**: Dedicated workbench to compare text pairs or vectors, computing Cosine Similarity, Cosine Distance ($1 - S_C$), and geometric angle ($\theta$).
+

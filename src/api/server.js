@@ -40,6 +40,24 @@ const PORT = 3000
 app.use(express.json())
 
 /*
+ * CORS middleware
+ */
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*")
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization")
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200)
+  }
+  next()
+})
+
+/*
+ * Serve static frontend
+ */
+app.use(express.static(path.join(__dirname, "../../frontend")))
+
+/*
  * Storage
  */
 
@@ -117,6 +135,36 @@ app.get("/health", (req, res) => {
 })
 
 /*
+ * System Overview & Stats
+ */
+
+app.get("/stats", (req, res) => {
+  const records = Array.from(vectorStore.vectors.values())
+  const uniqueDocs = new Set(
+    records.map((r) => r.metadata?.documentId).filter(Boolean),
+  )
+
+  res.json({
+    success: true,
+    data: {
+      totalVectors: vectorStore.vectors.size,
+      dimension: vectorStore.dimension || 384,
+      totalDocuments: uniqueDocs.size,
+      hnswNodes: hnswIndex.size,
+      hnswMaxLevel: hnswIndex.maxLevel,
+      hnswEntryPoint: hnswIndex.entryPoint,
+      hnswM: hnswIndex.M,
+      hnswEfConstruction: hnswIndex.efConstruction,
+      hnswEfSearch: hnswIndex.efSearch,
+      embeddingModel: "Xenova/multilingual-e5-small",
+      storage: "JSON Persistence (data/vectors.json)",
+      vectorStorageFile: "data/vectors.json",
+      hnswStorageFile: "data/hnsw.json",
+    },
+  })
+})
+
+/*
  * Document ingestion
  */
 
@@ -132,13 +180,11 @@ app.post("/documents", validateDocument, async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-
       data: {
         documentId: result.documentId,
-
         source: result.source,
-
         chunkCount: result.chunkCount,
+        chunks: result.chunks || [],
       },
     })
   } catch (error) {
@@ -154,34 +200,110 @@ app.post("/query", validateQuery, async (req, res, next) => {
   try {
     const { question, topK = 5, threshold = 0 } = req.body
 
-    const result = await ragPipeline.ask(question, topK)
+    // 1. Generate query embedding for 2D visualization
+    let queryVector = null
+    try {
+      queryVector = await ragRetriever.embeddingModel.embedQuery(question)
+    } catch (e) {
+      console.warn("Could not generate query vector directly:", e.message)
+    }
 
-    const filteredResults = result.results.filter(
+    // 2. Execute RAG pipeline with graceful LLM fallback
+    let ragResult
+    let llmError = null
+    try {
+      ragResult = await ragPipeline.ask(question, topK)
+    } catch (err) {
+      llmError = err.message
+      const retrieved = await ragRetriever.retrieve(question, topK)
+      const context = ragContextBuilder.build(retrieved)
+      ragResult = {
+        answer: `⚠️ LLM generation unavailable (${llmError}). Context was retrieved successfully.`,
+        results: retrieved,
+        context,
+      }
+    }
+
+    const filteredResults = (ragResult.results || []).filter(
       (item) => item.score >= threshold,
     )
 
+    const enrichedResults = (ragResult.results || []).map((item) => {
+      const record = vectorStore.get(item.id)
+      return {
+        id: item.id,
+        score: item.score,
+        cosineDistance: 1 - item.score,
+        passedThreshold: item.score >= threshold,
+        text: record?.metadata?.text || item.text || "",
+        metadata: record ? record.metadata : item.metadata || {},
+        vector: record ? record.vector : null,
+      }
+    })
+
     res.json({
       success: true,
-
       data: {
         question,
-
-        answer: result.answer,
-
+        queryVector,
+        answer: ragResult.answer,
+        context: ragResult.context || "",
+        results: enrichedResults,
         sources: filteredResults.map((item) => ({
           id: item.id,
-
           score: item.score,
-
-          source: item.metadata.source,
-
-          chunk: item.metadata.chunkIndex,
+          source: item.metadata?.source || "",
+          chunk: item.metadata?.chunkIndex ?? 0,
         })),
       },
     })
   } catch (error) {
     next(error)
   }
+})
+
+/*
+ * Direct Embedding endpoint (for similarity testing / explorer)
+ */
+
+app.post("/embed", async (req, res, next) => {
+  try {
+    const { text, isQuery = false } = req.body
+
+    if (typeof text !== "string" || text.trim() === "") {
+      return res.status(400).json({
+        success: false,
+        message: "text must be a non-empty string",
+      })
+    }
+
+    const vector = isQuery
+      ? await ragRetriever.embeddingModel.embedQuery(text)
+      : await ragRetriever.embeddingModel.embed(text)
+
+    res.json({
+      success: true,
+      data: {
+        text,
+        vector,
+        dimension: vector.length,
+      },
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+/*
+ * List all stored vectors
+ */
+
+app.get("/vectors", (req, res) => {
+  const records = Array.from(vectorStore.vectors.values())
+  res.json({
+    success: true,
+    data: records,
+  })
 })
 
 /*
@@ -324,9 +446,9 @@ app.post("/vectors/search", validateSearch, (req, res, next) => {
 
         return {
           id: result.id,
-
           score: result.score,
-
+          cosineDistance: 1 - result.score,
+          vector: record ? record.vector : null,
           metadata: record ? record.metadata : {},
         }
       })
@@ -338,6 +460,46 @@ app.post("/vectors/search", validateSearch, (req, res, next) => {
   } catch (error) {
     next(error)
   }
+})
+
+/*
+ * HNSW Graph structure endpoint
+ */
+
+app.get("/hnsw", (req, res) => {
+  const nodes = []
+
+  for (const node of hnswIndex.nodes.values()) {
+    const neighbors = {}
+
+    for (const [level, neighborIds] of node.neighbors) {
+      neighbors[level] = Array.from(neighborIds)
+    }
+
+    const record = vectorStore.get(node.id)
+
+    nodes.push({
+      id: node.id,
+      level: node.level,
+      neighbors,
+      metadata: record ? record.metadata : {},
+      dimension: node.vector ? node.vector.length : hnswIndex.dimension,
+    })
+  }
+
+  res.json({
+    success: true,
+    data: {
+      entryPoint: hnswIndex.entryPoint,
+      maxLevel: hnswIndex.maxLevel,
+      dimension: hnswIndex.dimension,
+      M: hnswIndex.M,
+      efConstruction: hnswIndex.efConstruction,
+      efSearch: hnswIndex.efSearch,
+      size: hnswIndex.size,
+      nodes,
+    },
+  })
 })
 
 /*

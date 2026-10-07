@@ -1,0 +1,29 @@
+{
+  "dimension": 3,
+  "vectors": [
+    {
+      "id": "doc-1",
+      "vector": [
+        1,
+        0,
+        0
+      ],
+      "metadata": {
+        "source": "react.md",
+        "topic": "React"
+      }
+    },
+    {
+      "id": "doc-2",
+      "vector": [
+        0.9,
+        0.1,
+        0
+      ],
+      "metadata": {
+        "source": "react-state.md",
+        "topic": "React State"
+      }
+    }
+  ]
+}

@@ -3,7 +3,12 @@ const path = require("path")
 const VectorStore = require("../src/core/VectorStore")
 const JsonStorage = require("../src/storage/JsonStorage")
 
-const storagePath = path.join(__dirname, "../data/vectors.json")
+const fs = require("fs")
+const storagePath = path.join(__dirname, "../data/test-vectors.json")
+
+if (fs.existsSync(storagePath)) {
+  fs.unlinkSync(storagePath)
+}
 
 const storage = new JsonStorage(storagePath)
 
